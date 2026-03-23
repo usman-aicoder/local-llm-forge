@@ -1,0 +1,52 @@
+# ── Python ───────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+*.egg
+
+# ── Virtual environments ──────────────────────────────────────────────────────
+venv/
+.venv/
+env/
+.env/
+
+# ── Secrets ──────────────────────────────────────────────────────────────────
+.env
+!.env.example
+
+# ── Storage — model weights and user data (never commit) ─────────────────────
+# Models can be 7–70 GB; datasets are user-specific
+storage/models/
+storage/checkpoints/
+storage/merged_models/
+storage/gguf_exports/
+storage/demo/
+
+# Dataset files (user data — keep directory structure via .gitkeep)
+storage/datasets/raw/**
+storage/datasets/cleaned/**
+storage/datasets/formatted/**
+storage/datasets/tokenized/**
+!storage/datasets/raw/.gitkeep
+!storage/datasets/cleaned/.gitkeep
+!storage/datasets/formatted/.gitkeep
+!storage/datasets/tokenized/.gitkeep
+
+# RAG documents and vectors (user data)
+storage/rag_documents/**
+storage/qdrant/**
+!storage/rag_documents/.gitkeep
+!storage/qdrant/.gitkeep
+
+# ── Test/coverage ─────────────────────────────────────────────────────────────
+.pytest_cache/
+.coverage
+htmlcov/
+
+# ── MyPy ─────────────────────────────────────────────────────────────────────
+.mypy_cache/

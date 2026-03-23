@@ -1,0 +1,169 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ── CSS Variable Definitions ──────────────────────────────────────────────── */
+/*
+ * Dark mode (default — .dark class on <html>):
+ *   zinc-50 = lightest, zinc-950 = darkest  (standard Tailwind order)
+ * Light mode (:root:not(.dark)):
+ *   scale is INVERTED — zinc-50 maps to the darkest value, zinc-950 to lightest
+ *   Every existing bg-zinc, text-zinc, border-zinc class auto-adapts.
+ */
+
+/* Dark mode: standard Tailwind zinc RGB triplets */
+:root {
+  --zinc-50:  250 250 250;
+  --zinc-100: 244 244 245;
+  --zinc-200: 228 228 231;
+  --zinc-300: 212 212 216;
+  --zinc-400: 161 161 170;
+  --zinc-500: 113 113 122;
+  --zinc-600: 82  82  91;
+  --zinc-700: 63  63  70;
+  --zinc-800: 39  39  42;
+  --zinc-900: 24  24  27;
+  --zinc-950: 9   9   11;
+
+  --color-white: 255 255 255;
+  --color-black: 0   0   0;
+
+  /* Accent (blue) stays consistent */
+  --accent: 96 165 250;  /* blue-400 */
+
+  /* Semantic */
+  --bg:      var(--zinc-950);
+  --surface: var(--zinc-900);
+}
+
+/* Light mode: invert the zinc scale */
+:root:not(.dark) {
+  --zinc-50:  9   9   11;   /* was 950 */
+  --zinc-100: 24  24  27;   /* was 900 */
+  --zinc-200: 39  39  42;   /* was 800 */
+  --zinc-300: 63  63  70;   /* was 700 */
+  --zinc-400: 82  82  91;   /* was 600 */
+  --zinc-500: 113 113 122;  /* 500 stays */
+  --zinc-600: 161 161 170;  /* was 400 */
+  --zinc-700: 212 212 216;  /* was 300 */
+  --zinc-800: 228 228 231;  /* was 200 */
+  --zinc-900: 244 244 245;  /* was 100 */
+  --zinc-950: 250 250 250;  /* was 50  */
+
+  --color-white: 0   0   0;   /* inverted: "white" becomes black in light mode */
+  --color-black: 255 255 255; /* inverted: "black" becomes white in light mode */
+}
+
+/* ── Base ───────────────────────────────────────────────────────────────────── */
+
+html {
+  /* Smooth theme transition — only on color-related properties */
+  transition: background-color 0.2s ease, color 0.2s ease;
+}
+
+body {
+  background-color: rgb(var(--bg));
+  color: rgb(var(--zinc-50));
+  font-family: "Inter", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+    Roboto, Helvetica, Arial, sans-serif;
+  font-feature-settings: "cv11", "ss01";
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* ── Custom scrollbar ───────────────────────────────────────────────────────── */
+
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: rgb(var(--zinc-700));
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgb(var(--zinc-600));
+}
+
+/* ── Focus rings ────────────────────────────────────────────────────────────── */
+
+:focus-visible {
+  outline: 2px solid rgba(96, 165, 250, 0.6);
+  outline-offset: 2px;
+}
+
+/* ── Selection ──────────────────────────────────────────────────────────────── */
+
+::selection {
+  background: rgba(96, 165, 250, 0.25);
+}
+
+/* ── Component utilities ────────────────────────────────────────────────────── */
+
+@layer components {
+  /* Card container */
+  .card {
+    @apply bg-zinc-900 border border-zinc-800 rounded-lg p-4 shadow-card;
+  }
+  .card-md {
+    @apply bg-zinc-900 border border-zinc-800 rounded-xl p-5 shadow-card-md;
+  }
+
+  /* Form input */
+  .input {
+    @apply bg-zinc-800 border border-zinc-700 rounded px-3 py-2 text-sm
+           outline-none focus:border-zinc-500 transition-colors
+           placeholder:text-zinc-600;
+  }
+
+  /* Primary button (white bg / black text — inverts in light mode via CSS vars) */
+  .btn-primary {
+    @apply px-4 py-2 bg-white text-black text-sm font-medium rounded
+           hover:bg-zinc-200 disabled:opacity-40 transition-colors;
+  }
+
+  /* Ghost button */
+  .btn-ghost {
+    @apply px-3 py-1.5 text-sm text-zinc-400 hover:text-white
+           border border-zinc-700 hover:border-zinc-500 rounded transition-colors;
+  }
+
+  /* Badge */
+  .badge {
+    @apply px-1.5 py-0.5 rounded text-xs font-medium;
+  }
+
+  /* Status dot */
+  .dot-pulse {
+    @apply w-1.5 h-1.5 rounded-full animate-pulse;
+  }
+
+  /* Skeleton loader */
+  .skeleton {
+    @apply bg-zinc-800 rounded animate-pulse;
+  }
+
+  /* Sidebar nav item */
+  .nav-item {
+    @apply flex items-center gap-2.5 px-3 py-2 rounded-md text-sm transition-colors text-zinc-500 hover:bg-zinc-900 hover:text-zinc-200;
+  }
+  .nav-item-active {
+    @apply flex items-center gap-2.5 px-3 py-2 rounded-md text-sm transition-colors bg-zinc-800 text-white;
+  }
+}
+
+/* ── Animations ─────────────────────────────────────────────────────────────── */
+
+@keyframes fade-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@layer utilities {
+  .animate-fade-in {
+    animation: fade-in 0.18s ease-out both;
+  }
+}
