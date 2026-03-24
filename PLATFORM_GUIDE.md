@@ -1,5 +1,5 @@
-# LLM Platform — Complete Guide
-> Local fine-tuning, evaluation, inference, and RAG — end to end, no cloud required.
+# Local LLM Forge — Complete Guide
+> Private AI fine-tuning, on your hardware. Train, evaluate, and deploy local models — no cloud required.
 
 ---
 
