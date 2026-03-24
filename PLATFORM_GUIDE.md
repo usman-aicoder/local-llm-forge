@@ -239,32 +239,83 @@ The navbar shows a green "API online" indicator when FastAPI is reachable.
 
 ## 7. Core Concepts
 
+### How Training Works in This Platform
+
+Every training job in this platform uses the same two-layer efficiency stack:
+
+```
+Base model (e.g. LLaMA 7B)
+  │
+  ├── [Optional] 4-bit NF4 quantization via bitsandbytes  ← this is the "Q" in QLoRA
+  │   Reduces VRAM from ~14 GB to ~5 GB
+  │
+  └── LoRA adapter layers (always used)
+        Small trainable matrices injected into the frozen base model
+        Only ~0.1% of parameters are trained
+        Saved as a tiny adapter file (~100–400 MB)
+```
+
+The **training objective** (SFT, DPO, or ORPO) determines *what* the model learns from your data. The **LoRA / QLoRA** layer determines *how* training is made efficient on limited hardware. They operate at different levels and are always used together.
+
+---
+
 ### LoRA — Low-Rank Adaptation
-Instead of updating all billions of parameters in a base model (which requires enormous memory), LoRA inserts small trainable matrices alongside the frozen base model weights. Training only these small matrices uses 10–100× less memory and produces an "adapter" — a small file you can swap onto any copy of the base model.
 
-**Key parameters:**
-- `r` (rank) — size of the LoRA matrices. Higher = more capacity, more memory. Typical: 8–64.
-- `alpha` — scaling factor. Usually set to 2× rank.
-- `dropout` — regularization. Usually 0.05.
-- `target_modules` — which weight matrices to adapt. Default covers all attention + MLP layers.
+**Always active in every training job.**
 
-### QLoRA — Quantized LoRA
-QLoRA loads the base model in **4-bit NF4 quantization** (using bitsandbytes), dramatically reducing VRAM usage. A 7B model that normally needs 14 GB fits in ~5 GB. LoRA adapters train in full precision on top. This is the recommended mode for consumer GPUs.
+Instead of updating all billions of parameters in the base model (which requires enormous memory and time), LoRA injects small trainable matrices alongside the frozen base weights. Only these matrices are updated during training. The result is an "adapter" file — a few hundred MB — that can be merged back into the base model at export time.
 
-### Training Methods
+**Key parameters (set per job in the UI):**
 
-| Method | Use Case | Requires |
+| Parameter | Default | Effect |
 |---|---|---|
-| **SFT** | Teach the model to follow instructions / answer questions | instruction + output pairs |
-| **DPO** | Teach the model to prefer good responses over bad ones | prompt + chosen + rejected triples |
-| **ORPO** | Combined SFT + preference alignment in one pass | prompt + chosen + rejected triples |
+| `r` (rank) | 16 | Size of the LoRA matrices. Higher = more expressive, more memory. Range: 8–64 |
+| `alpha` | 32 | Scaling factor. Set to 2× rank as a rule of thumb |
+| `dropout` | 0.05 | Regularization — prevents the adapter from overfitting |
+| `target_modules` | all attn + MLP | Which weight matrices to inject LoRA into. Default covers `q_proj`, `k_proj`, `v_proj`, `o_proj`, `gate_proj`, `up_proj`, `down_proj` |
+
+**Output:** A `.safetensors` adapter file and tokenizer config, saved to `storage/checkpoints/{job_id}/`.
+
+---
+
+### QLoRA — LoRA with 4-bit Quantization
+
+**On by default. Recommended for GPUs with less than 24 GB VRAM.**
+
+QLoRA is not a separate technique from LoRA — it is LoRA applied on top of a base model that has been loaded in **4-bit NF4 quantization** (via the bitsandbytes library). The base model weights are compressed from 16-bit to 4-bit (a 4× memory reduction). The LoRA adapter layers still train in full bfloat16 precision.
+
+| Mode | VRAM for 7B model | How |
+|---|---|---|
+| **QLoRA** (default, `use_qlora=True`) | ~5 GB | Base model in 4-bit NF4, double quantization enabled |
+| **LoRA only** (`use_qlora=False`) | ~14 GB | Base model in bfloat16, no compression |
+
+In both cases, the LoRA adapter is identical and produces the same type of output file. The only difference is how much VRAM the base model occupies during training.
+
+---
+
+### Training Objectives
+
+These determine what the model learns. All three use LoRA/QLoRA internally.
+
+| Objective | What the model learns | Dataset required |
+|---|---|---|
+| **SFT** (Supervised Fine-Tuning) | Follow instructions and produce desired outputs | `instruction` + `output` pairs |
+| **DPO** (Direct Preference Optimization) | Prefer good responses over bad ones | `prompt` + `chosen` + `rejected` triples |
+| **ORPO** (implemented as IPO) | Combined instruction-following + preference alignment in one pass | `prompt` + `chosen` + `rejected` triples |
+
+> **Note on ORPO:** TRL 0.29+ removed `loss_type="orpo"`. This platform implements ORPO using `DPOTrainer` with `loss_type="ipo"` (Identity Preference Optimization), which is the closest available reference-free equivalent. The behavior is nearly identical: no reference model required, SFT + alignment in one training pass.
+
+---
 
 ### Dataset Formats
 
-| Format | Structure | Best For |
+| Format | Structure | Used for |
 |---|---|---|
-| **Alpaca** | `{"instruction": "...", "input": "...", "output": "..."}` | Single-turn Q&A |
-| **ChatML** | `[{"role": "user", "content": "..."}, {"role": "assistant", "content": "..."}]` | Multi-turn conversation |
+| **Alpaca** | `{"text": "### Instruction:\n...\n\n### Response:\n..."}` | SFT — single-turn Q&A |
+| **ChatML** | `{"text": "<\|im_start\|>user\n...<\|im_end\|>\n<\|im_start\|>assistant\n..."}` | SFT — chat/conversation style |
+| **Preference** | `{"prompt": "...", "chosen": "...", "rejected": "..."}` | DPO and ORPO |
+
+The Format step in the dataset pipeline converts your raw data into one of these structures automatically.
 
 ---
 
@@ -416,14 +467,16 @@ Navigate to **Jobs** in the sidebar. Click **+ New Job**.
 | **Base model** | HuggingFace model ID (e.g. `meta-llama/Meta-Llama-3-8B-Instruct`) or local path |
 | **Training method** | SFT, DPO, or ORPO |
 
-#### LoRA Settings
+#### LoRA / QLoRA Settings
 
-| Setting | Typical Value | Notes |
+LoRA is always used. The `Use QLoRA` toggle controls whether the base model is also loaded in 4-bit quantization.
+
+| Setting | Default | Notes |
 |---|---|---|
-| Use QLoRA | Enabled | Recommended; saves ~70% VRAM |
-| LoRA rank (r) | 16 | Higher = more capacity, more memory |
-| LoRA alpha | 32 | Usually 2× rank |
-| LoRA dropout | 0.05 | Light regularization |
+| Use QLoRA | On | Loads base model in 4-bit NF4. Reduces VRAM from ~14 GB to ~5 GB for a 7B model. Recommended unless you have 24+ GB VRAM |
+| LoRA rank (r) | 16 | Size of adapter matrices. Higher = more capacity but more memory. 8–32 is a good range |
+| LoRA alpha | 32 | Scaling factor. Rule of thumb: 2× rank |
+| LoRA dropout | 0.05 | Light regularization to prevent adapter overfitting |
 
 #### Training Hyperparameters
 
@@ -580,49 +633,73 @@ The **source citations** are shown below each answer — click any source to exp
 
 ## 9. Training Method Reference
 
+All three methods use the same LoRA/QLoRA efficiency stack. The difference is only in the training objective — what the loss function teaches the model.
+
+```
+Your data  →  [SFT loss / DPO loss / IPO loss]  →  LoRA adapter  →  Export to Ollama
+               ↑ this is the "method"                ↑ this is always LoRA (+ QLoRA by default)
+```
+
+---
+
 ### SFT — Supervised Fine-Tuning
+
+**Implementation:** `SFTTrainer` from TRL + `LoraConfig` from PEFT (+ bitsandbytes 4-bit if QLoRA enabled)
+
 **Best for:** Teaching the model to follow a new instruction format, answer questions in a specific style, or develop domain expertise from a labeled dataset.
 
 **Dataset format:**
 ```jsonl
-{"text": "<formatted prompt including instruction and expected response>"}
+{"text": "### Instruction:\nYour question here\n\n### Response:\nExpected answer here"}
 ```
-(The platform's Format step produces this automatically.)
+The platform's Format step produces this automatically from your `instruction`/`output` columns.
 
-**Typical hyperparameters:**
-- Learning rate: 1e-4 to 3e-4
-- Epochs: 2–5
-- Batch × grad_accum effective batch: 16–32
+**Hyperparameters (defaults):**
+- Learning rate: `2e-4`
+- Epochs: 3
+- Batch size: 2, gradient accumulation: 8 (effective batch = 16)
+- Optimizer: `adamw_torch_fused`, LR scheduler: cosine with 5% warmup
 
-**When SFT is enough:** You have a clean instruction/output dataset and want the model to generalize to similar prompts.
+**When to use:** You have labeled instruction/output pairs and want the model to generalize to similar prompts.
 
 ---
 
 ### DPO — Direct Preference Optimization
-**Best for:** Improving response quality by teaching the model to prefer well-written, accurate, or safe responses over poor ones.
+
+**Implementation:** `DPOTrainer` with default sigmoid loss from TRL + `LoraConfig` passed as `peft_config`. Reference model is `None` — PEFT handles it implicitly using the frozen base weights.
+
+**Best for:** Improving response quality by teaching the model to prefer good responses over bad ones, without changing its overall instruction-following style.
 
 **Dataset format:**
 ```jsonl
 {"prompt": "user question", "chosen": "good response", "rejected": "bad response"}
 ```
 
-**Typical hyperparameters:**
-- Learning rate: 5e-7 to 1e-5 (much lower than SFT)
-- Epochs: 1–3
-- Beta: 0.1 (controls how far the model can deviate from the reference)
+**Hyperparameters (defaults):**
+- Learning rate: `5e-5`
+- Beta: `0.1` — controls how far the model can deviate from the reference. Higher = more conservative
+- Epochs: 3, batch size: 1, gradient accumulation: 8
 
-**When DPO is appropriate:** You have existing SFT outputs you can rank, or you can generate chosen/rejected pairs from human feedback or an LLM judge.
+**When to use:** You have an SFT model and want to refine response quality using ranked pairs. Can generate `chosen`/`rejected` pairs by having the base model produce multiple outputs and ranking them.
 
 ---
 
-### ORPO — Odds Ratio Preference Optimization (implemented as IPO)
-**Best for:** Combined SFT + alignment in one training pass. More efficient than running SFT then DPO separately. Works well with smaller datasets.
+### ORPO — Implemented as IPO (Identity Preference Optimization)
+
+**Implementation:** `DPOTrainer` with `loss_type="ipo"` and `ref_model=None` from TRL + `LoraConfig` as `peft_config`.
+
+> **Why IPO and not ORPO?** TRL 0.29 removed `loss_type="orpo"` from `DPOConfig`. IPO is the closest available reference-free preference optimization loss — both ORPO and IPO eliminate the need for a reference model and combine alignment with instruction-following in a single pass.
+
+**Best for:** Combined instruction-following + preference alignment in one training pass. More efficient than running SFT then DPO as separate jobs. Works well with smaller datasets.
 
 **Dataset format:** Same as DPO — `prompt`, `chosen`, `rejected`.
 
-**Key advantage over DPO:** No reference model is needed. Training is faster and uses less memory.
+**Hyperparameters (defaults):**
+- Learning rate: `8e-6` (lower than DPO — IPO loss is more sensitive)
+- Beta: `0.1` (regularization weight)
+- Epochs: 3, batch size: 1, gradient accumulation: 8
 
-**Note:** In TRL 0.29+, ORPO is implemented via `DPOTrainer` with `loss_type="ipo"` — the Identity Preference Optimization loss, which is the closest reference-free equivalent available.
+**Key advantage over DPO:** No separate reference model is loaded. Training is faster and uses less peak VRAM. Good starting point when you do not yet have a fine-tuned SFT model to use as DPO baseline.
 
 ---
 
