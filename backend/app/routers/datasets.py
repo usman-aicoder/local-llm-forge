@@ -207,6 +207,44 @@ async def format_dataset(dataset_id: str, config: FormatConfig, bg: BackgroundTa
     return {"task_id": task_id}
 
 
+@router.post("/datasets/{dataset_id}/augment")
+async def augment_dataset(
+    dataset_id: str,
+    bg: BackgroundTasks,
+    ollama_model: str = "llama3.2:latest",
+    paraphrases_per_row: int = 2,
+    max_rows_to_augment: int = 100,
+):
+    """
+    Augment a formatted dataset using Ollama to generate paraphrased variants.
+    Requires dataset status = formatted (Alpaca JSONL with instruction/output columns).
+    Creates a NEW dataset document; the original is preserved.
+    """
+    ds = await _require_dataset(dataset_id)
+    if ds.status not in ("formatted", "tokenized"):
+        raise HTTPException(
+            status_code=400,
+            detail="Dataset must be formatted before augmenting.",
+        )
+    if not ds.file_path or not Path(ds.file_path).exists():
+        raise HTTPException(status_code=400, detail="Dataset file not found on disk.")
+
+    task = TaskRecord()
+    await task.insert()
+    task_id = str(task.id)
+
+    from app.services.augment_service import run_augment
+    bg.add_task(
+        run_augment,
+        task_id=task_id,
+        dataset_id=dataset_id,
+        ollama_model=ollama_model,
+        paraphrases_per_row=paraphrases_per_row,
+        max_rows_to_augment=max_rows_to_augment,
+    )
+    return {"task_id": task_id}
+
+
 @router.post("/datasets/{dataset_id}/tokenize")
 async def tokenize_dataset(dataset_id: str, config: TokenizeConfig, bg: BackgroundTasks):
     ds = await _require_dataset(dataset_id)

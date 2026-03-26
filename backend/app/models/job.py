@@ -27,11 +27,17 @@ class TrainingJob(Document):
     ])
 
     # Training method
-    training_method: Literal["sft", "dpo", "orpo"] = "sft"
+    training_method: Literal["sft", "dpo", "orpo", "fft"] = "sft"
 
     # Acceleration / resume
     use_unsloth: bool = False
     resume_from_job_id: str | None = None
+
+    # FFT mode
+    is_full_model: bool = False   # True when FFT job — no merge step needed
+
+    # Notifications
+    webhook_url: str | None = None
 
     # Training
     learning_rate: float = 2e-4

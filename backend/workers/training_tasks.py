@@ -168,15 +168,58 @@ def run_training_task(self, job_id: str) -> dict:
         elif training_method == "orpo":
             from ml.train_orpo import run_orpo_training
             result = run_orpo_training(**common)
+        elif training_method == "fft":
+            from ml.train_fft import run_fft_training
+            fft_args = dict(
+                job_id=job_id,
+                model_path=job["model_path"],
+                train_data_path=str(train_path),
+                val_data_path=str(val_path),
+                output_dir=str(adapter_dir),
+                learning_rate=job.get("learning_rate", 1e-5),
+                epochs=job.get("epochs", 3),
+                batch_size=job.get("batch_size", 1),
+                grad_accum=job.get("grad_accum", 16),
+                max_seq_len=job.get("max_seq_len", 1024),
+                bf16=job.get("bf16", True),
+                resume_from_checkpoint=resume_path,
+                on_epoch_end=on_epoch_end,
+                on_log=on_log,
+            )
+            result = run_fft_training(**fft_args)
         else:
             result = run_training(**common)
 
-        _set_status(db, job_id, "completed", {
-            "adapter_path": result["adapter_path"],
-            "completed_at": datetime.utcnow(),
-        })
+        # FFT output is the full model dir; LoRA output is the adapter dir
+        is_fft = training_method == "fft"
+        completed_fields: dict = {"completed_at": datetime.utcnow()}
+        if is_fft:
+            completed_fields["adapter_path"] = result["model_path"]
+            completed_fields["is_full_model"] = True
+        else:
+            completed_fields["adapter_path"] = result["adapter_path"]
+
+        _set_status(db, job_id, "completed", completed_fields)
         _push_log(r, job_id, "Training completed successfully")
         r.set(f"job:{job_id}:done", "1")
+
+        # ── Webhook notification ──────────────────────────────────────────────
+        webhook_url = job.get("webhook_url")
+        if webhook_url:
+            try:
+                import requests as _requests
+                _requests.post(
+                    webhook_url,
+                    json={
+                        "text": f"Training job '{job.get('name', job_id)}' completed. Status: completed.",
+                        "job_id": job_id,
+                        "status": "completed",
+                    },
+                    timeout=10,
+                )
+            except Exception:
+                pass   # webhook failure must not affect job status
+
         return result
 
     except Exception:
@@ -184,4 +227,23 @@ def run_training_task(self, job_id: str) -> dict:
         _set_status(db, job_id, "failed", {"error_message": err})
         _push_log(r, job_id, f"ERROR: {err}")
         r.set(f"job:{job_id}:done", "1")
+
+        # ── Webhook on failure ────────────────────────────────────────────────
+        try:
+            job_doc = db["training_jobs"].find_one({"_id": ObjectId(job_id)})
+            webhook_url = job_doc.get("webhook_url") if job_doc else None
+            if webhook_url:
+                import requests as _requests
+                _requests.post(
+                    webhook_url,
+                    json={
+                        "text": f"Training job '{job_doc.get('name', job_id)}' failed. Check logs.",
+                        "job_id": job_id,
+                        "status": "failed",
+                    },
+                    timeout=10,
+                )
+        except Exception:
+            pass
+
         return {"error": err}

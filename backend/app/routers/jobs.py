@@ -44,6 +44,7 @@ class JobCreate(BaseModel):
     training_method: str = "sft"   # "sft" | "dpo" | "orpo"
     use_unsloth: bool = False
     resume_from_job_id: str | None = None
+    webhook_url: str | None = None
     learning_rate: float = 2e-4
     epochs: int = 3
     batch_size: int = 2
@@ -84,10 +85,13 @@ async def create_job(project_id: str, body: JobCreate):
     if not dataset:
         raise HTTPException(status_code=404, detail="Dataset not found")
     is_preference = body.training_method in ("dpo", "orpo")
+    is_fft = body.training_method == "fft"
     if is_preference and dataset.status not in ("formatted", "tokenized"):
         raise HTTPException(status_code=400, detail="DPO/ORPO requires a formatted dataset (prompt/chosen/rejected columns).")
-    if not is_preference and dataset.status != "tokenized":
+    if not is_preference and not is_fft and dataset.status != "tokenized":
         raise HTTPException(status_code=400, detail="SFT requires a tokenized dataset.")
+    if is_fft and dataset.status != "tokenized":
+        raise HTTPException(status_code=400, detail="FFT requires a tokenized dataset.")
 
     job = TrainingJob(
         project_id=project,   # type: ignore[arg-type]
@@ -99,6 +103,7 @@ async def create_job(project_id: str, body: JobCreate):
         training_method=body.training_method,
         use_unsloth=body.use_unsloth,
         resume_from_job_id=body.resume_from_job_id,
+        webhook_url=body.webhook_url,
         lora_r=body.lora_r,
         lora_alpha=body.lora_alpha,
         lora_dropout=body.lora_dropout,
