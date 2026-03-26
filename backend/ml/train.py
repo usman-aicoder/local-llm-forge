@@ -89,6 +89,13 @@ def run_training(
                 use_gradient_checkpointing="unsloth",
                 bias="none",
             )
+            # Unsloth may set '<EOS_TOKEN>' as a template placeholder;
+            # TRL 0.24 validates it must exist in the vocab — reset to real EOS.
+            if tokenizer.eos_token not in tokenizer.get_vocab():
+                tokenizer.eos_token = tokenizer.decode([tokenizer.eos_token_id])
+            if tokenizer.pad_token is None or tokenizer.pad_token not in tokenizer.get_vocab():
+                tokenizer.pad_token = tokenizer.eos_token
+            tokenizer.padding_side = "right"
             backend = "unsloth"
         except ImportError:
             if on_log:
