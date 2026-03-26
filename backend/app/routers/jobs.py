@@ -297,6 +297,103 @@ async def create_job_from_config(
     return await create_job(project_id, body)
 
 
+# ── vLLM export ───────────────────────────────────────────────────────────────
+
+@router.post("/jobs/{job_id}/export-vllm")
+async def export_vllm(job_id: str):
+    """
+    Generate a vLLM launch command for a merged model.
+    Requires the merge step to have completed first.
+    Stores the launch command on the job document.
+    """
+    job = await _require_job(job_id)
+    if not job.merged_path:
+        raise HTTPException(
+            status_code=400,
+            detail="Merge the model first (POST /jobs/{id}/merge).",
+        )
+
+    from ml.export_vllm import prepare_vllm_export
+    try:
+        result = prepare_vllm_export(job.merged_path)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    job.vllm_launch_cmd = result["launch_command"]
+    await job.save()
+    return result
+
+
+# ── Model card ────────────────────────────────────────────────────────────────
+
+@router.post("/jobs/{job_id}/model-card")
+async def generate_model_card(job_id: str):
+    """
+    Auto-generate MODEL_CARD.md and save it to the adapter directory.
+    Optionally includes evaluation results if a completed evaluation exists.
+    """
+    job = await _require_job(job_id)
+    if job.status != "completed":
+        raise HTTPException(status_code=400, detail="Job must be completed first.")
+    if not job.adapter_path:
+        raise HTTPException(status_code=400, detail="No adapter path found on this job.")
+
+    from app.models.dataset import Dataset
+    from app.models.evaluation import Evaluation
+    from ml.model_card import save_model_card
+
+    # Fetch dataset metadata
+    dataset = None
+    try:
+        raw_ds_id = job.dataset_id
+        ds_id = raw_ds_id.ref.id if hasattr(raw_ds_id, "ref") else raw_ds_id
+        dataset_doc = await Dataset.get(ds_id)
+        if dataset_doc:
+            dataset = dataset_doc.model_dump(mode="json")
+    except Exception:
+        pass
+
+    # Fetch latest evaluation if available
+    evaluation = None
+    try:
+        evals = await Evaluation.find(
+            Evaluation.job_id.id == job.id  # type: ignore[attr-defined]
+        ).sort("-created_at").limit(1).to_list()
+        if evals:
+            evaluation = evals[0].model_dump(mode="json")
+    except Exception:
+        pass
+
+    card_path = save_model_card(
+        job=job.model_dump(mode="json"),
+        adapter_path=job.adapter_path,
+        dataset=dataset,
+        evaluation=evaluation,
+    )
+
+    job.model_card_path = card_path
+    await job.save()
+
+    # Return the markdown content so the UI can render it inline
+    card_content = Path(card_path).read_text(encoding="utf-8")
+    return {"model_card_path": card_path, "content": card_content}
+
+
+@router.get("/jobs/{job_id}/model-card")
+async def get_model_card(job_id: str):
+    """Return the current MODEL_CARD.md content for a job."""
+    job = await _require_job(job_id)
+    if not job.model_card_path:
+        raise HTTPException(
+            status_code=404,
+            detail="No model card generated yet. POST /jobs/{id}/model-card to generate one.",
+        )
+    card_path = Path(job.model_card_path)
+    if not card_path.exists():
+        raise HTTPException(status_code=404, detail="Model card file not found on disk.")
+    return {"model_card_path": str(card_path), "content": card_path.read_text(encoding="utf-8")}
+
+
 # ── SSE stream ────────────────────────────────────────────────────────────────
 
 @router.get("/jobs/{job_id}/stream")

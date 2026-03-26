@@ -51,6 +51,8 @@ class TrainingJob(Document):
     merged_path: str | None = None
     gguf_path: str | None = None
     ollama_model_name: str | None = None
+    vllm_launch_cmd: str | None = None
+    model_card_path: str | None = None
 
     started_at: datetime | None = None
     completed_at: datetime | None = None

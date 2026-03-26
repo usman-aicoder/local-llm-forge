@@ -7,7 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
 from app.database import init_db
-from app.routers import projects, datasets, jobs, models, evaluations, inference, rag, tasks
+from app.routers import projects, datasets, jobs, models, evaluations, inference, rag, tasks, openai_compat
 
 
 @asynccontextmanager
@@ -39,6 +39,7 @@ app.include_router(evaluations.router)
 app.include_router(inference.router)
 app.include_router(rag.router)
 app.include_router(tasks.router)
+app.include_router(openai_compat.router)
 
 
 @app.get("/health", tags=["system"])
