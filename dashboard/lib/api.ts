@@ -1,4 +1,8 @@
-import type { Project, Dataset, TrainingJob, Checkpoint, Evaluation, EvalRow, OllamaModel, HFModel, RAGCollection, RAGDocument, HealthStatus } from "./types"
+import type {
+  Project, Dataset, TrainingJob, Checkpoint, Evaluation, EvalRow,
+  OllamaModel, HFModel, RAGCollection, RAGDocument, HealthStatus,
+  HFBrowseModel, Experiment, SystemCapabilities,
+} from "./types"
 
 const BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8010"
 
@@ -28,15 +32,26 @@ export const api = {
       apiFetch<Project>(`/projects/${id}`, { method: "PATCH", body: JSON.stringify(body) }),
     delete: (id: string) =>
       apiFetch<void>(`/projects/${id}`, { method: "DELETE" }),
+    experimentsSummary: (id: string) =>
+      apiFetch<{ experiments: Experiment[] }>(`/projects/${id}/experiments/summary`),
   },
 
   // ── Models ────────────────────────────────────────────────
   models: {
     ollama: () => apiFetch<{ models: OllamaModel[] }>("/models/ollama"),
     hf: () => apiFetch<{ models: HFModel[] }>("/models/hf"),
+    browse: (search = "", limit = 20) =>
+      apiFetch<HFBrowseModel[]>(
+        `/models/browse?search=${encodeURIComponent(search)}&limit=${limit}`
+      ),
   },
 
-  // ── Datasets (Phase 2) ────────────────────────────────────
+  // ── System ────────────────────────────────────────────────
+  system: {
+    capabilities: () => apiFetch<SystemCapabilities>("/system/capabilities"),
+  },
+
+  // ── Datasets ──────────────────────────────────────────────
   datasets: {
     list: (projectId: string) =>
       apiFetch<{ datasets: Dataset[] }>(`/projects/${projectId}/datasets`),
@@ -50,13 +65,21 @@ export const api = {
       apiFetch<{ task_id: string }>(`/datasets/${id}/format`, { method: "POST", body: JSON.stringify(body) }),
     tokenize: (id: string, body: { max_seq_len: number; val_split: number }) =>
       apiFetch<{ task_id: string }>(`/datasets/${id}/tokenize`, { method: "POST", body: JSON.stringify(body) }),
+    augment: (id: string, params: { ollama_model: string; paraphrases_per_row: number }) =>
+      apiFetch<{ task_id: string }>(
+        `/datasets/${id}/augment?${new URLSearchParams({
+          ollama_model: params.ollama_model,
+          paraphrases_per_row: String(params.paraphrases_per_row),
+        })}`,
+        { method: "POST" }
+      ),
     delete: (id: string) =>
       apiFetch<void>(`/datasets/${id}`, { method: "DELETE" }),
     fromPdf: (projectId: string, form: FormData) =>
       apiFetch<{ dataset_id: string; task_id: string }>(`/projects/${projectId}/datasets/from-pdf`, {
         method: "POST",
         body: form,
-        headers: {},   // let browser set Content-Type with boundary
+        headers: {},
       }),
     fromUrl: (projectId: string, body: { url: string; name: string; ollama_model: string; pairs_per_chunk: number }) =>
       apiFetch<{ dataset_id: string; task_id: string }>(`/projects/${projectId}/datasets/from-url`, {
@@ -65,7 +88,7 @@ export const api = {
       }),
   },
 
-  // ── Jobs (Phase 3) ────────────────────────────────────────
+  // ── Jobs ──────────────────────────────────────────────────
   jobs: {
     list: (projectId: string) =>
       apiFetch<{ jobs: TrainingJob[] }>(`/projects/${projectId}/jobs`),
@@ -82,9 +105,29 @@ export const api = {
       apiFetch<{ task_id: string }>(`/jobs/${id}/merge`, { method: "POST" }),
     export: (id: string) =>
       apiFetch<{ task_id: string }>(`/jobs/${id}/export`, { method: "POST" }),
+    exportVllm: (id: string) =>
+      apiFetch<{ vllm_model_path: string; launch_command: string }>(`/jobs/${id}/export-vllm`, { method: "POST" }),
+    generateModelCard: (id: string) =>
+      apiFetch<{ model_card_path: string; content: string }>(`/jobs/${id}/model-card`, { method: "POST" }),
+    getModelCard: (id: string) =>
+      apiFetch<{ model_card_path: string; content: string }>(`/jobs/${id}/model-card`),
+    pushToHub: (id: string, body: { repo_id: string; private?: boolean; commit_message?: string }) =>
+      apiFetch<{ repo_id: string; url: string }>(`/jobs/${id}/push-to-hub`, {
+        method: "POST",
+        body: JSON.stringify(body),
+      }),
+    configUrl: (id: string) => `${BASE}/jobs/${id}/config`,
+    fromConfig: (projectId: string, datasetId: string, name: string, file: File) => {
+      const fd = new FormData()
+      fd.append("config_file", file)
+      return apiFetch<TrainingJob>(
+        `/jobs/from-config?project_id=${projectId}&dataset_id=${datasetId}&name=${encodeURIComponent(name)}`,
+        { method: "POST", body: fd, headers: {} }
+      )
+    },
   },
 
-  // ── Evaluations (Phase 5) ─────────────────────────────────
+  // ── Evaluations ───────────────────────────────────────────
   evaluations: {
     get: (jobId: string) => apiFetch<Evaluation>(`/jobs/${jobId}/evaluation`),
     runAuto: (jobId: string) =>
@@ -95,7 +138,7 @@ export const api = {
       apiFetch<{ evaluations: EvalRow[] }>(`/projects/${projectId}/evaluations`),
   },
 
-  // ── RAG (Phase 7) ─────────────────────────────────────────
+  // ── RAG ───────────────────────────────────────────────────
   rag: {
     listCollections: (projectId: string) =>
       apiFetch<{ collections: RAGCollection[] }>(`/projects/${projectId}/rag/collections`),

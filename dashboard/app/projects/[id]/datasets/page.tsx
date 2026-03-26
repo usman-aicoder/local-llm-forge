@@ -7,6 +7,7 @@ import { useDatasets, useDeleteDataset } from "@/lib/hooks/useDatasets"
 import { PipelineStatus } from "@/components/dataset/PipelineStatus"
 import { CreateDatasetModal } from "@/components/dataset/CreateDatasetModal"
 import { useTaskStatus } from "@/lib/hooks/useTasks"
+import { api } from "@/lib/api"
 import type { Dataset } from "@/lib/types"
 
 // ── Source badge ──────────────────────────────────────────────────────────────
@@ -65,12 +66,74 @@ function GeneratingRow({ ds, projectId }: { ds: Dataset; projectId: string }) {
 
 // ── Dataset card ──────────────────────────────────────────────────────────────
 
+// ── Augment form (inline) ─────────────────────────────────────────────────────
+
+function AugmentForm({ dsId, onDone }: { dsId: string; onDone: () => void }) {
+  const [model, setModel] = useState("llama3:8b")
+  const [count, setCount] = useState(2)
+  const [busy, setBusy] = useState(false)
+  const [taskId, setTaskId] = useState<string | null>(null)
+  const [err, setErr] = useState<string | null>(null)
+
+  async function run() {
+    setBusy(true)
+    setErr(null)
+    try {
+      const res = await api.datasets.augment(dsId, { ollama_model: model, paraphrases_per_row: count })
+      setTaskId(res.task_id)
+    } catch (e: unknown) {
+      setErr((e as Error).message)
+      setBusy(false)
+    }
+  }
+
+  if (taskId) {
+    return (
+      <div className="mt-3 p-3 border border-blue-900 rounded bg-blue-950 text-blue-300 text-xs">
+        Augmentation started — task {taskId.slice(0, 8)}…
+        A new augmented dataset will appear in this list when complete.
+        <button onClick={onDone} className="ml-3 underline">Dismiss</button>
+      </div>
+    )
+  }
+
+  return (
+    <div className="mt-3 p-3 border border-zinc-700 rounded bg-zinc-800 space-y-2">
+      <p className="text-zinc-400 text-xs font-medium">Augment with Ollama</p>
+      <div className="flex gap-2 flex-wrap">
+        <div className="flex-1 min-w-32">
+          <label className="text-zinc-500 text-xs block mb-1">Ollama model</label>
+          <input value={model} onChange={e => setModel(e.target.value)} className="input w-full text-xs" placeholder="llama3:8b" />
+        </div>
+        <div className="w-24">
+          <label className="text-zinc-500 text-xs block mb-1">Paraphrases / row</label>
+          <input type="number" min={1} max={10} value={count} onChange={e => setCount(+e.target.value)} className="input w-full text-xs" />
+        </div>
+      </div>
+      {err && <p className="text-red-400 text-xs">{err}</p>}
+      <div className="flex gap-2">
+        <button onClick={run} disabled={busy} className="px-3 py-1 bg-white text-black text-xs font-medium rounded hover:bg-zinc-200 disabled:opacity-50">
+          {busy ? "Starting…" : "Start Augmentation"}
+        </button>
+        <button onClick={onDone} className="px-3 py-1 border border-zinc-700 text-zinc-400 text-xs rounded hover:bg-zinc-700">
+          Cancel
+        </button>
+      </div>
+    </div>
+  )
+}
+
+// ── Dataset card ──────────────────────────────────────────────────────────────
+
 function DatasetCard({ ds, projectId, onDelete }: { ds: Dataset; projectId: string; onDelete: (id: string) => void }) {
+  const [showAugment, setShowAugment] = useState(false)
+
   if (ds.status === "generating") {
     return <GeneratingRow ds={ds} projectId={projectId} />
   }
 
   const failed = ds.status === "failed"
+  const canAugment = ds.status === "formatted" || ds.status === "tokenized"
 
   function handleDelete(e: React.MouseEvent) {
     e.preventDefault()
@@ -106,6 +169,14 @@ function DatasetCard({ ds, projectId, onDelete }: { ds: Dataset; projectId: stri
           )}
         </div>
         <div className="flex items-center gap-2 shrink-0">
+          {canAugment && !showAugment && (
+            <button
+              onClick={() => setShowAugment(true)}
+              className="text-xs text-zinc-500 hover:text-white px-3 py-1 border border-zinc-700 rounded"
+            >
+              Augment
+            </button>
+          )}
           {!failed && (
             <a
               href={`/projects/${projectId}/datasets/${ds.id}/eda`}
@@ -123,6 +194,9 @@ function DatasetCard({ ds, projectId, onDelete }: { ds: Dataset; projectId: stri
         </div>
       </div>
       {!failed && <PipelineStatus dataset={ds} projectId={projectId} />}
+      {showAugment && (
+        <AugmentForm dsId={ds.id} onDone={() => setShowAugment(false)} />
+      )}
     </div>
   )
 }

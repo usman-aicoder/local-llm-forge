@@ -46,8 +46,12 @@ export interface TrainingJob {
   name: string
   base_model: string
   model_path: string
-  training_method: "sft" | "dpo" | "orpo"
+  training_method: "sft" | "dpo" | "orpo" | "fft"
   use_qlora: boolean
+  use_unsloth: boolean
+  resume_from_job_id: string | null
+  webhook_url: string | null
+  is_full_model: boolean
   lora_r: number
   lora_alpha: number
   lora_dropout: number
@@ -65,6 +69,9 @@ export interface TrainingJob {
   merged_path: string | null
   gguf_path: string | null
   ollama_model_name: string | null
+  vllm_launch_cmd: string | null
+  model_card_path: string | null
+  hf_repo_id: string | null
   started_at: string | null
   completed_at: string | null
   created_at: string
@@ -155,4 +162,47 @@ export interface HealthStatus {
   mongo: string
   redis: string
   ollama: string
+}
+
+export interface HFBrowseModel {
+  id: string
+  author: string
+  model_name: string
+  downloads: number
+  likes: number
+  tags: string[]
+  is_downloaded: boolean
+  vram_estimate: { qlora_gb: number | "unknown"; full_lora_gb: number | "unknown" }
+}
+
+export interface Experiment {
+  id: string
+  name: string
+  training_method: string
+  base_model: string
+  hyperparams: {
+    learning_rate: number
+    epochs: number
+    batch_size: number
+    grad_accum: number
+    lora_r: number
+    lora_alpha: number
+    use_qlora: boolean
+    use_unsloth: boolean
+    max_seq_len: number
+  }
+  metrics: {
+    rouge_1: number | null
+    rouge_2: number | null
+    rouge_l: number | null
+    bleu: number | null
+    perplexity: number | null
+  }
+  completed_at: string | null
+  created_at: string | null
+}
+
+export interface SystemCapabilities {
+  unsloth: boolean
+  bitsandbytes: boolean
 }

@@ -134,6 +134,16 @@ export default function ProjectPage() {
         </svg>
       ),
     },
+    {
+      href: `/projects/${id}/experiments`,
+      label: "Experiments",
+      description: "Compare completed jobs: hyperparameters, ROUGE, BLEU metrics side by side.",
+      icon: (
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M2 13l3-4 3 2 3-5 3 2" /><path d="M2 15h12" />
+        </svg>
+      ),
+    },
   ]
 
   return (
