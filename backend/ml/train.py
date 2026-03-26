@@ -32,6 +32,9 @@ def run_training(
     grad_accum: int = 8,
     max_seq_len: int = 2048,
     bf16: bool = True,
+    # Acceleration / resume
+    use_unsloth: bool = False,
+    resume_from_checkpoint: str | None = None,
     # Callbacks
     on_epoch_end: Callable[[int, float, float], None] | None = None,
     on_log: Callable[[str], None] | None = None,
@@ -65,48 +68,77 @@ def run_training(
     if on_log:
         on_log(f"Loading model from {model_path}")
 
-    # ── Quantisation config ───────────────────────────────────────────────────
-    bnb_config = None
-    if use_qlora:
-        bnb_config = BitsAndBytesConfig(
-            load_in_4bit=True,
-            bnb_4bit_quant_type="nf4",
-            bnb_4bit_compute_dtype=torch.bfloat16,
-            bnb_4bit_use_double_quant=True,
+    # ── Model loading: try Unsloth, fall back to standard HuggingFace ─────────
+    backend = "standard"
+
+    if use_unsloth:
+        try:
+            from unsloth import FastLanguageModel  # type: ignore[import]
+            model, tokenizer = FastLanguageModel.from_pretrained(
+                model_name=model_path,
+                max_seq_length=max_seq_len,
+                dtype=None,           # auto-detect
+                load_in_4bit=use_qlora,
+            )
+            model = FastLanguageModel.get_peft_model(
+                model,
+                r=lora_r,
+                lora_alpha=lora_alpha,
+                lora_dropout=lora_dropout,
+                target_modules=target_modules,
+                use_gradient_checkpointing="unsloth",
+                bias="none",
+            )
+            backend = "unsloth"
+        except ImportError:
+            if on_log:
+                on_log("Unsloth not installed — falling back to standard TRL")
+
+    if backend == "standard":
+        # ── Quantisation config ───────────────────────────────────────────────
+        bnb_config = None
+        if use_qlora:
+            bnb_config = BitsAndBytesConfig(
+                load_in_4bit=True,
+                bnb_4bit_quant_type="nf4",
+                bnb_4bit_compute_dtype=torch.bfloat16,
+                bnb_4bit_use_double_quant=True,
+            )
+
+        # Leave headroom for training: cap GPU usage at 6 GB, overflow to CPU RAM
+        max_mem = {0: "6GiB", "cpu": "48GiB"} if torch.cuda.is_available() else None
+        model = AutoModelForCausalLM.from_pretrained(
+            model_path,
+            quantization_config=bnb_config,
+            device_map="auto",
+            max_memory=max_mem,
+            torch_dtype=torch.bfloat16,
+            trust_remote_code=True,
+            low_cpu_mem_usage=True,
         )
+        model.config.use_cache = False
 
-    import torch
-    # Leave headroom for training: cap GPU usage at 6 GB, overflow to CPU RAM
-    max_mem = {0: "6GiB", "cpu": "48GiB"} if torch.cuda.is_available() else None
-    model = AutoModelForCausalLM.from_pretrained(
-        model_path,
-        quantization_config=bnb_config,
-        device_map="auto",
-        max_memory=max_mem,
-        torch_dtype=torch.bfloat16,
-        trust_remote_code=True,
-        low_cpu_mem_usage=True,
-    )
-    model.config.use_cache = False
+        tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True)
+        if tokenizer.pad_token is None:
+            tokenizer.pad_token = tokenizer.eos_token
+        tokenizer.padding_side = "right"
 
-    tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True)
-    if tokenizer.pad_token is None:
-        tokenizer.pad_token = tokenizer.eos_token
-    tokenizer.padding_side = "right"
+        if use_qlora:
+            model = prepare_model_for_kbit_training(model)
 
-    if use_qlora:
-        model = prepare_model_for_kbit_training(model)
+        # ── LoRA config ───────────────────────────────────────────────────────
+        lora_config = LoraConfig(
+            r=lora_r,
+            lora_alpha=lora_alpha,
+            target_modules=target_modules,
+            lora_dropout=lora_dropout,
+            bias="none",
+            task_type=TaskType.CAUSAL_LM,
+        )
+        model = get_peft_model(model, lora_config)
 
-    # ── LoRA config ───────────────────────────────────────────────────────────
-    lora_config = LoraConfig(
-        r=lora_r,
-        lora_alpha=lora_alpha,
-        target_modules=target_modules,
-        lora_dropout=lora_dropout,
-        bias="none",
-        task_type=TaskType.CAUSAL_LM,
-    )
-    model = get_peft_model(model, lora_config)
+    if on_log:
+        on_log(f"Training backend: {backend}")
 
     trainable, total = model.get_nb_trainable_parameters()
     if on_log:
@@ -179,8 +211,10 @@ def run_training(
 
     if on_log:
         on_log("Training started")
+    if resume_from_checkpoint and on_log:
+        on_log(f"Resuming from checkpoint: {resume_from_checkpoint}")
 
-    trainer.train()
+    trainer.train(resume_from_checkpoint=resume_from_checkpoint)
 
     if on_log:
         on_log("Saving adapter...")

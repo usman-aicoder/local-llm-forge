@@ -114,6 +114,24 @@ def run_training_task(self, job_id: str) -> dict:
         adapter_dir = settings.abs(settings.checkpoints_dir) / job_id
         adapter_dir.mkdir(parents=True, exist_ok=True)
 
+        # ── Resolve resume checkpoint path ────────────────────────────────────
+        resume_path: str | None = None
+        resume_from_job_id = job.get("resume_from_job_id")
+        if resume_from_job_id:
+            source_job = db["training_jobs"].find_one({"_id": ObjectId(resume_from_job_id)})
+            if source_job and source_job.get("adapter_path"):
+                resume_path = source_job["adapter_path"]
+            else:
+                # Fall back to latest checkpoint directory
+                checkpoint_dir = settings.abs(settings.checkpoints_dir) / resume_from_job_id
+                if checkpoint_dir.exists():
+                    checkpoints = sorted(
+                        checkpoint_dir.glob("checkpoint-*"),
+                        key=lambda p: int(p.name.split("-")[1]),
+                    )
+                    if checkpoints:
+                        resume_path = str(checkpoints[-1])
+
         def on_epoch_end(epoch: int, train_loss: float, eval_loss: float):
             _push_progress(r, job_id, epoch, train_loss, eval_loss)
             _push_log(r, job_id, f"Epoch {epoch} — train_loss={train_loss:.4f}  eval_loss={eval_loss:.4f}")
@@ -138,6 +156,8 @@ def run_training_task(self, job_id: str) -> dict:
             grad_accum=job.get("grad_accum", 8),
             max_seq_len=job.get("max_seq_len", 2048),
             bf16=job.get("bf16", True),
+            use_unsloth=job.get("use_unsloth", False),
+            resume_from_checkpoint=resume_path,
             on_epoch_end=on_epoch_end,
             on_log=on_log,
         )

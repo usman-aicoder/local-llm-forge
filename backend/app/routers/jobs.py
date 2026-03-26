@@ -5,13 +5,16 @@ SSE endpoint streams live training progress from Redis.
 from __future__ import annotations
 
 import asyncio
+import importlib.util
 import json
 from datetime import datetime
+from pathlib import Path
 
 import redis.asyncio as aioredis
+import yaml
 from beanie import PydanticObjectId
-from fastapi import APIRouter, BackgroundTasks, HTTPException
-from fastapi.responses import StreamingResponse
+from fastapi import APIRouter, BackgroundTasks, HTTPException, UploadFile, File
+from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel
 
 from app.config import settings
@@ -39,6 +42,8 @@ class JobCreate(BaseModel):
         "gate_proj", "up_proj", "down_proj",
     ]
     training_method: str = "sft"   # "sft" | "dpo" | "orpo"
+    use_unsloth: bool = False
+    resume_from_job_id: str | None = None
     learning_rate: float = 2e-4
     epochs: int = 3
     batch_size: int = 2
@@ -92,6 +97,8 @@ async def create_job(project_id: str, body: JobCreate):
         model_path=body.model_path,
         use_qlora=body.use_qlora,
         training_method=body.training_method,
+        use_unsloth=body.use_unsloth,
+        resume_from_job_id=body.resume_from_job_id,
         lora_r=body.lora_r,
         lora_alpha=body.lora_alpha,
         lora_dropout=body.lora_dropout,
@@ -200,6 +207,94 @@ async def gpu_status(job_id: str):
 @router.get("/models/vram-estimate")
 async def vram_estimate(base_model: str = "mistral:7b", lora_r: int = 16, use_qlora: bool = True):
     return estimate_vram_gb(base_model, lora_r, use_qlora)
+
+
+# ── System capabilities ───────────────────────────────────────────────────────
+
+@router.get("/system/capabilities", tags=["system"])
+async def system_capabilities():
+    """Report which optional acceleration libraries are available."""
+    return {
+        "unsloth": importlib.util.find_spec("unsloth") is not None,
+        "bitsandbytes": importlib.util.find_spec("bitsandbytes") is not None,
+    }
+
+
+# ── Config export / import ────────────────────────────────────────────────────
+
+@router.get("/jobs/{job_id}/config")
+async def export_job_config(job_id: str):
+    """Export all training hyperparameters for a job as a YAML file."""
+    job = await _require_job(job_id)
+    config = {
+        "base_model": job.base_model,
+        "model_path": job.model_path,
+        "training_method": job.training_method,
+        "lora": {
+            "use_qlora": job.use_qlora,
+            "r": job.lora_r,
+            "alpha": job.lora_alpha,
+            "dropout": job.lora_dropout,
+            "target_modules": job.target_modules,
+        },
+        "training": {
+            "learning_rate": job.learning_rate,
+            "epochs": job.epochs,
+            "batch_size": job.batch_size,
+            "grad_accum": job.grad_accum,
+            "max_seq_len": job.max_seq_len,
+            "bf16": job.bf16,
+        },
+        "use_unsloth": job.use_unsloth,
+    }
+    yaml_content = yaml.dump(config, default_flow_style=False, sort_keys=False)
+    return Response(
+        content=yaml_content,
+        media_type="application/x-yaml",
+        headers={"Content-Disposition": f"attachment; filename=job-{job_id[:8]}-config.yaml"},
+    )
+
+
+@router.post("/jobs/from-config", status_code=200)
+async def create_job_from_config(
+    project_id: str,
+    dataset_id: str,
+    name: str,
+    config_file: UploadFile = File(...),
+):
+    """Create a new job pre-filled from an uploaded YAML config file."""
+    raw = await config_file.read()
+    try:
+        config = yaml.safe_load(raw)
+    except yaml.YAMLError as exc:
+        raise HTTPException(status_code=400, detail=f"Invalid YAML: {exc}")
+
+    lora = config.get("lora", {})
+    training = config.get("training", {})
+
+    body = JobCreate(
+        dataset_id=dataset_id,
+        name=name,
+        base_model=config.get("base_model", "mistral:7b"),
+        model_path=config.get("model_path", ""),
+        training_method=config.get("training_method", "sft"),
+        use_qlora=lora.get("use_qlora", True),
+        lora_r=lora.get("r", 16),
+        lora_alpha=lora.get("alpha", 32),
+        lora_dropout=lora.get("dropout", 0.05),
+        target_modules=lora.get("target_modules", [
+            "q_proj", "k_proj", "v_proj", "o_proj",
+            "gate_proj", "up_proj", "down_proj",
+        ]),
+        learning_rate=training.get("learning_rate", 2e-4),
+        epochs=training.get("epochs", 3),
+        batch_size=training.get("batch_size", 2),
+        grad_accum=training.get("grad_accum", 8),
+        max_seq_len=training.get("max_seq_len", 2048),
+        bf16=training.get("bf16", True),
+        use_unsloth=config.get("use_unsloth", False),
+    )
+    return await create_job(project_id, body)
 
 
 # ── SSE stream ────────────────────────────────────────────────────────────────

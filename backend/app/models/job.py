@@ -29,6 +29,10 @@ class TrainingJob(Document):
     # Training method
     training_method: Literal["sft", "dpo", "orpo"] = "sft"
 
+    # Acceleration / resume
+    use_unsloth: bool = False
+    resume_from_job_id: str | None = None
+
     # Training
     learning_rate: float = 2e-4
     epochs: int = 3
