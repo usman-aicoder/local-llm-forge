@@ -399,6 +399,59 @@ async def get_model_card(job_id: str):
     return {"model_card_path": str(card_path), "content": card_path.read_text(encoding="utf-8")}
 
 
+# ── HuggingFace Hub push ──────────────────────────────────────────────────────
+
+class HubPushBody(BaseModel):
+    repo_id: str
+    private: bool = True
+    commit_message: str = "Upload fine-tuned model"
+
+
+@router.post("/jobs/{job_id}/push-to-hub")
+async def push_to_hub(job_id: str, body: HubPushBody):
+    """
+    Push the model adapter (or full FFT model) to HuggingFace Hub.
+    Requires HF_TOKEN to be set in .env / environment.
+    Uses merged_path if available, otherwise adapter_path.
+    """
+    job = await _require_job(job_id)
+    if job.status != "completed":
+        raise HTTPException(status_code=400, detail="Job must be completed before pushing to hub.")
+
+    push_dir = job.merged_path or job.adapter_path
+    if not push_dir:
+        raise HTTPException(
+            status_code=400,
+            detail="No model artifacts found. Run merge first (POST /jobs/{id}/merge).",
+        )
+    if not Path(push_dir).exists():
+        raise HTTPException(status_code=400, detail=f"Model directory not found on disk: {push_dir}")
+
+    token = settings.hf_token
+    if not token:
+        raise HTTPException(status_code=400, detail="HF_TOKEN is not configured. Add it to your .env file.")
+
+    try:
+        from huggingface_hub import HfApi
+        api = HfApi(token=token)
+        api.create_repo(repo_id=body.repo_id, private=body.private, exist_ok=True)
+        api.upload_folder(
+            folder_path=push_dir,
+            repo_id=body.repo_id,
+            commit_message=body.commit_message,
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"HuggingFace Hub push failed: {exc}")
+
+    job.hf_repo_id = body.repo_id
+    await job.save()
+
+    return {
+        "repo_id": body.repo_id,
+        "url": f"https://huggingface.co/{body.repo_id}",
+    }
+
+
 # ── SSE stream ────────────────────────────────────────────────────────────────
 
 @router.get("/jobs/{job_id}/stream")

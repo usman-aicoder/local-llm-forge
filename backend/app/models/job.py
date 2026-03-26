@@ -59,6 +59,7 @@ class TrainingJob(Document):
     ollama_model_name: str | None = None
     vllm_launch_cmd: str | None = None
     model_card_path: str | None = None
+    hf_repo_id: str | None = None
 
     started_at: datetime | None = None
     completed_at: datetime | None = None
